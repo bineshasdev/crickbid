@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function club(tournamentId, clubId) {
+      return get(/databases/$(database)/documents/tournaments/$(tournamentId)/clubs/$(clubId)).data;
+    }
+
+    function isCoordinatorOf(tournamentId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.createdBy == request.auth.uid;
+    }
+
+    // Collection-group reads (e.g. a manager's dashboard querying every
+    // "clubs" subcollection across all tournaments for their own uid) are
+    // NOT covered by the nested `match /tournaments/{t}/clubs/{c}` rule
+    // below — Firestore only authorizes those via a recursive-wildcard
+    // rule declared separately, per Firebase's collection-group-query docs.
+    match /{path=**}/clubs/{clubId} {
+      allow read: if isSignedIn();
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      // Self-signup creates your own profile; a coordinator adding a club
+      // directly creates the new manager's profile on their behalf, so
+      // this isn't restricted to request.auth.uid == uid.
+      allow create: if isSignedIn()
+        && request.resource.data.uid == uid
+        && request.resource.data.role in ['coordinator', 'manager'];
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.uid == resource.data.uid;
+
+      // A coordinator's private, reusable list of clubs (with their usual
+      // manager) they can pick from when setting up a new tournament.
+      match /clubPool/{poolId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      // A coordinator's private, reusable roster of players (e.g. imported
+      // from Excel) they can pull into any of their tournaments.
+      match /playerPool/{poolId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /tournaments/{tournamentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isCoordinatorOf(tournamentId);
+
+      match /clubs/{clubId} {
+        allow read: if isSignedIn();
+        allow create: if
+          (isSignedIn()
+            && request.resource.data.managerUid == request.auth.uid
+            && request.resource.data.status == 'pending'
+            && request.resource.data.remainingPoints == request.resource.data.budget)
+          || (isCoordinatorOf(tournamentId)
+            && request.resource.data.remainingPoints == request.resource.data.budget);
+        allow update: if isCoordinatorOf(tournamentId)
+          || (isSignedIn() && resource.data.managerUid == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['logoUrl', 'managerName']));
+        allow delete: if isCoordinatorOf(tournamentId);
+      }
+
+      match /players/{playerId} {
+        allow read: if isSignedIn();
+        allow write: if isCoordinatorOf(tournamentId);
+      }
+
+      match /auction/{docId} {
+        // Coordinator has full control (start/pause/next player/mark sold/unsold).
+        allow read: if isSignedIn();
+        allow write: if isCoordinatorOf(tournamentId);
+
+        // A club manager may raise the bid on the live player for their own
+        // approved club, if they can actually afford it, without touching
+        // anything else about the document.
+        allow update: if isSignedIn()
+          && resource.data.status == 'live'
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.currentPlayerId == resource.data.currentPlayerId
+          && request.resource.data.currentBid > resource.data.currentBid
+          && request.resource.data.currentBidClubId != resource.data.currentBidClubId
+          && club(tournamentId, request.resource.data.currentBidClubId).managerUid == request.auth.uid
+          && club(tournamentId, request.resource.data.currentBidClubId).status == 'approved'
+          && club(tournamentId, request.resource.data.currentBidClubId).remainingPoints >= request.resource.data.currentBid
+          && request.resource.data.currentBidClubName == club(tournamentId, request.resource.data.currentBidClubId).name;
+
+        match /bids/{bidId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn()
+            && club(tournamentId, request.resource.data.clubId).managerUid == request.auth.uid;
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}
