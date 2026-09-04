@@ -52,12 +52,12 @@ function parseRows(rows: Record<string, unknown>[], defaultBasePrice: number): P
 /**
  * Bulk-imports players (no photos — those still need to be added one at a
  * time) from an Excel/CSV sheet straight into the coordinator's reusable
- * player pool. Restricted to the "admin" account; everyone else adds
+ * player pool. Restricted to the "admin" role; everyone else adds
  * players one at a time or pulls existing pool entries into a tournament.
  */
 export function ImportPlayersFromExcel({ defaultBasePrice }: { defaultBasePrice: number }) {
   const { profile } = useAuth();
-  const isAdmin = profile?.name?.trim().toLowerCase() === "admin";
+  const isAdmin = profile?.role === "admin";
   const coordinatorUid = profile?.uid ?? "";
 
   const [rows, setRows] = useState<ParsedRow[]>([]);

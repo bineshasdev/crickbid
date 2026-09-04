@@ -6,7 +6,7 @@ export type ClubStatus = "pending" | "approved" | "rejected";
 
 export type AuctionStatus = "not_started" | "live" | "paused" | "completed";
 
-export type UserRole = "coordinator" | "manager";
+export type UserRole = "coordinator" | "manager" | "admin";
 
 export interface AppUser {
   uid: string;
